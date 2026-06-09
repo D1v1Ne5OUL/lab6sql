@@ -1,0 +1,62 @@
+from sqlalchemy.orm import Session
+from sqlalchemy import Column, Date, Integer, String, Time, create_engine
+from sqlalchemy.orm import DeclarativeBase
+from secret import user, passwd, adress, dbname
+
+
+DATABASE_URL = f"mssql+pyodbc://{user}:{passwd}@{adress}/{dbname}?driver=ODBC+Driver+17+for+SQL+Server&Encrypt=No&TrustServerCertificate=yes&PersistSecurityInfo=no&Pooling=no&MultipleActiveResultSets=no"
+
+ENGINE_LIST = [create_engine(DATABASE_URL) for _ in range(12)]
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Logs(Base):
+    __tablename__ = "Logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, nullable=False)
+    user_action = Column(String, nullable=False)
+    action_date = Column(Date, nullable=False)
+    action_time = Column(Time, nullable=False)
+    action_result = Column(String, nullable=False)
+
+
+for engine in ENGINE_LIST:
+    Base.metadata.create_all(bind=engine)
+
+
+def insert_record(engine, record: Logs):
+    with Session(autoflush=False, bind=engine) as session:
+        session.add(record)
+        session.commit()
+
+
+def route_to_shard(record: Logs, current_shard: int):
+    shard_index = current_shard % 12
+    engine = ENGINE_LIST[shard_index]
+    insert_record(engine, record)
+    print(f"bd{shard_index + 1}")
+    return shard_index
+
+
+def main():
+    from datetime import date, time
+    
+    sample_record = Logs(
+        username="asd",
+        user_action="DELETE",
+        action_date=date(2025, 1, 1),
+        action_time=time(0, 0, 0),
+        action_result="OK"
+    )
+    
+    shard_position = 0
+    for _ in range(1, 12):
+        shard_position = route_to_shard(sample_record, shard_position)
+
+
+if __name__ == "__main__":
+    main()
