@@ -1,0 +1,107 @@
+USE [master];
+GO
+
+BACKUP DATABASE [User_ActionsMIWN36] 
+TO DISK = N'your's_backup' 
+WITH FORMAT, 
+     MEDIANAME = N'SQL_Server_Backup', 
+     NAME = N'бэкап базы данных';
+GO
+
+USE [master];
+GO
+
+CREATE OR ALTER PROCEDURE sp_RestoreDatabaseFromBackup
+    @BackupFilePath NVARCHAR(512),
+    @NewDBName NVARCHAR(128),
+    @TargetFilesDir NVARCHAR(512)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF RIGHT(@TargetFilesDir, 1) <> '\' 
+        SET @TargetFilesDir = @TargetFilesDir + '\';
+
+    DECLARE @LogicalDataName NVARCHAR(128);
+    DECLARE @LogicalLogName NVARCHAR(128);
+    DECLARE @PhysicalDataPath NVARCHAR(512);
+    DECLARE @PhysicalLogPath NVARCHAR(512);
+
+    CREATE TABLE #FileList (
+        LogicalName NVARCHAR(128),
+        PhysicalName NVARCHAR(260),
+        Type CHAR(1),
+        FileGroupName NVARCHAR(128),
+        Size NUMERIC(20,0),
+        MaxSize NUMERIC(20,0),
+        FileId BIGINT,
+        CreateLSN NUMERIC(25,0),
+        DropLSN NUMERIC(25,0),
+        UniqueId UNIQUEIDENTIFIER,
+        ReadOnlyLSN NUMERIC(25,0),
+        ReadWriteLSN NUMERIC(25,0),
+        BackupSizeInBytes BIGINT,
+        SourceBlockSize INT,
+        FileGroupId INT,
+        LogGroupGuid UNIQUEIDENTIFIER,
+        DifferentialBaseLsn NUMERIC(25,0),
+        DifferentialBaseGuid UNIQUEIDENTIFIER,
+        IsReadOnly BIT,
+        IsPresent BIT,
+        TDEThumbprint VARBINARY(32),
+        SnapshotUrl NVARCHAR(360)
+    );
+
+    DECLARE @RestoreFilelistSQL NVARCHAR(MAX) = N'RESTORE FILELISTONLY FROM DISK = N''' + @BackupFilePath + N'''';
+
+    INSERT INTO #FileList
+    EXEC sp_executesql @RestoreFilelistSQL;
+
+    SELECT TOP 1 @LogicalDataName = LogicalName 
+    FROM #FileList 
+    WHERE Type = N'D' 
+    ORDER BY FileId;
+
+    SELECT TOP 1 @LogicalLogName = LogicalName 
+    FROM #FileList 
+    WHERE Type = N'L' 
+    ORDER BY FileId;
+
+    DROP TABLE #FileList;
+
+    IF @LogicalDataName IS NULL OR @LogicalLogName IS NULL
+    BEGIN
+        RAISERROR(N'Не удалось прочитать файлы из указанного бэкапа.', 16, 1);
+        RETURN;
+    END
+
+    SET @PhysicalDataPath = @TargetFilesDir + @NewDBName + N'.mdf';
+    SET @PhysicalLogPath = @TargetFilesDir + @NewDBName + N'_log.ldf';
+
+    IF EXISTS (SELECT 1 FROM sys.databases WHERE name = @NewDBName)
+    BEGIN
+        DECLARE @KillConnectionsSQL NVARCHAR(MAX) = N'ALTER DATABASE [' + @NewDBName + N'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;';
+        EXEC sp_executesql @KillConnectionsSQL;
+    END
+
+    DECLARE @RestoreDatabaseSQL NVARCHAR(MAX);
+    SET @RestoreDatabaseSQL = N'RESTORE DATABASE [' + @NewDBName + N'] ' +
+                              N'FROM DISK = N''' + @BackupFilePath + N''' ' +
+                              N'WITH MOVE N''' + @LogicalDataName + N''' TO N''' + @PhysicalDataPath + N''', ' +
+                              N'MOVE N''' + @LogicalLogName + N''' TO N''' + @PhysicalLogPath + N''', ' +
+                              N'REPLACE, STATS = 10;';
+    
+    EXEC sp_executesql @RestoreDatabaseSQL;
+
+    DECLARE @SetMultiUserSQL NVARCHAR(MAX) = N'ALTER DATABASE [' + @NewDBName + N'] SET MULTI_USER;';
+    EXEC sp_executesql @SetMultiUserSQL;
+
+    PRINT N'База данных ' + @NewDBName + N' восстановлена.';
+END;
+GO
+
+EXEC [master].[dbo].[sp_RestoreDatabaseFromBackup]
+    @BackupFilePath = N'Path_to_db_backup',
+    @NewDBName = N'name_new_db',
+    @TargetFilesDir = N'D:\SQL_Data\';
+GO
