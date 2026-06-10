@@ -34,7 +34,7 @@ def insert_record(engine, record: Logs):
         session.commit()
 
 
-def route_to_shard(record: Logs, current_shard: int):
+def to_shard(record: Logs, current_shard: int):
     shard_index = current_shard % 12
     engine = ENGINE_LIST[shard_index]
     insert_record(engine, record)
@@ -55,7 +55,7 @@ def main():
     
     shard_position = 0
     for _ in range(1, 12):
-        shard_position = route_to_shard(sample_record, shard_position)
+        shard_position = to_shard(sample_record, shard_position)
 
 
 if __name__ == "__main__":
